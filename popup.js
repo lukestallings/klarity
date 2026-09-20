@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = results[0].result;
       data.isHttps = tab.url ? tab.url.toLowerCase().startsWith('https://') : false;
 
-      // Run domain check and news search simultaneously
+      // Run domain age and news corroboration simultaneously
       const [domainAgeDays, crossRefData] = await Promise.all([
         getDomainAgeInDays(data.hostname),
         crossReferenceNews(data.headline, data.hostname)
@@ -504,7 +504,7 @@ async function evaluateContent(data, sensationalWords) {
   const hasSuspiciousTLD = SUSPICIOUS_TLDS.some(tld => data.hostname.endsWith(tld));
   const typosquatMatch = checkTyposquatting(data.hostname, TRUSTED_DOMAINS);
 
-  // 1. Domain Evaluation
+  // 1. Domain Credibility
   if (isGov) {
     score += 25;
     domainSignals.push({ icon: "🏛️", text: "Verified official government domain (.gov)" });
@@ -554,7 +554,7 @@ async function evaluateContent(data, sensationalWords) {
     });
   }
 
-  // About Us / Editorial Team Link Verification
+  // Masthead / Transparency Check
   if (data.hasAboutOrTeamLink) {
     score += 5;
     domainSignals.push({ icon: "✅", text: "Public About Us / Editorial Team page present" });
@@ -563,7 +563,7 @@ async function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "No transparent About Us or Masthead link found" });
   }
 
-  // Protocol Check
+  // HTTPS Security
   if (data.isHttps) {
     domainSignals.push({ icon: "🔒", text: "Secure encrypted protocol (HTTPS)" });
   } else {
@@ -571,7 +571,7 @@ async function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Insecure protocol connection (HTTP)" });
   }
 
-  // Ad Density & Farm Signals
+  // Ad Density & Ad-Farm Signals
   if (data.adCount >= 6 || (data.paragraphCount > 0 && data.adCount / data.paragraphCount > 1.2)) {
     score -= 20;
     domainSignals.push({ 
@@ -590,7 +590,7 @@ async function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Intrusive autoplay video player present" });
   }
 
-  // 2. Cross-Referencing & Outdated News Signals
+  // 2. Cross-Referencing Signals
   if (data.crossRef && data.crossRef.status === "success") {
     if (data.crossRef.count >= 3) {
       score += 15;
@@ -626,7 +626,20 @@ async function evaluateContent(data, sensationalWords) {
     }
   }
 
-  // 3. Sensational Words
+  // 3. Bot Amplification / Burner Domain Pattern
+  const isBurnerDomain = data.domainAgeDays !== null && data.domainAgeDays < 90;
+  const lacksIdentity = !data.hasByline && !data.hasAboutOrTeamLink;
+  const isUncorroborated = data.crossRef && data.crossRef.count === 0;
+
+  if (isBurnerDomain && lacksIdentity && isUncorroborated) {
+    score -= 25;
+    contentSignals.push({
+      icon: "🚨",
+      text: "Bot amplification pattern: Fresh burner domain with uncorroborated viral claim"
+    });
+  }
+
+  // 4. Sensational Words
   const fullText = (data.headline + " " + data.bodyText);
   const matchedWords = [];
   sensationalWords.forEach(word => {
@@ -646,7 +659,7 @@ async function evaluateContent(data, sensationalWords) {
     contentSignals.push({ icon: "✅", text: "No sensationalist buzzwords found" });
   }
 
-  // 4. Headline Caps
+  // 5. Headline Caps
   const lettersOnly = data.headline.replace(/[^a-zA-Z]/g, '');
   if (lettersOnly.length > 0) {
     const caps = (data.headline.replace(/[^A-Z]/g, '').length / lettersOnly.length) * 100;
@@ -656,7 +669,7 @@ async function evaluateContent(data, sensationalWords) {
     }
   }
 
-  // 5. Bylines & Quotes
+  // 6. Bylines & Quotes
   if (data.hasByline) {
     score += 10;
     contentSignals.push({ icon: "✅", text: "Verified author/reporter byline present" });
