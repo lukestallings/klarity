@@ -1,16 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Klarity",
+  "name": "Klarity: Content Analysis Engine",
   "version": "1.0",
-  "description": "Credibility analysis for news and web articles.",
+  "description": "Analyze web content for signals of disinformation using the Nutrition Label UI.",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "klarity-logo.png"
+  },
+  "icons": {
+    "128": "klarity-logo.png"
   }
 }
