@@ -369,11 +369,52 @@ function scrapePageData() {
   const hasAutoplayVideo = !!document.querySelector('video[autoplay], video[data-autoplay]');
   const quotesCount = (bodyText.match(/"([^"]{10,})"/g) || []).length;
   
-  const hasByline = !!(
-    document.querySelector('[rel="author"]') ||
-    document.querySelector('meta[name="author"]') ||
-    document.querySelector('.byline, .author, [itemprop="author"]')
-  );
+  // 1. Selector check (standard classes, schema tags, AP/CNN/NYT custom components)
+  const bylineSelectors = [
+    '[rel="author"]',
+    'meta[name="author"]',
+    'meta[property="article:author"]',
+    '.byline',
+    '.author',
+    '[itemprop="author"]',
+    '[class*="byline" i]',
+    '[class*="author" i]',
+    '[data-testid*="author" i]',
+    'span[class*="Component-author"]',
+    'div[class*="Page-authors"]'
+  ];
+
+  let hasByline = !!document.querySelector(bylineSelectors.join(','));
+
+  // 2. Text-pattern fallback (catches "By  JOCELYN NOVECK", "By John Doe", etc.)
+  if (!hasByline) {
+    const sampleText = Array.from(document.querySelectorAll('header, [class*="header"], h1, h2, p, span'))
+      .slice(0, 15)
+      .map(el => el.innerText)
+      .join(' ')
+      .replace(/\u00a0/g, ' '); // Normalize non-breaking spaces
+
+    // Matches "By [Name]" in Title Case OR ALL-CAPS (e.g., By JOCELYN NOVECK)
+    const bylinePattern = /\b(?:by|reporting by|written by)\s+([A-Z][a-zA-Z\.'-]+(?:\s+[A-Z][a-zA-Z\.'-]+){1,3})\b/;
+    hasByline = bylinePattern.test(sampleText);
+  }
+
+  // 3. Structured Data / JSON-LD fallback (AP News, NYT, and Reuters embed this on every story)
+  if (!hasByline) {
+    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (const script of scripts) {
+      try {
+        const json = JSON.parse(script.textContent);
+        const authors = json.author || (json['@graph'] && json['@graph'].find(item => item.author)?.author);
+        if (authors && (typeof authors === 'string' || authors.name || (Array.isArray(authors) && authors.length > 0))) {
+          hasByline = true;
+          break;
+        }
+      } catch (e) {
+        // Skip malformed JSON
+      }
+    }
+  }
 
   return {
     hostname: currentHost,
