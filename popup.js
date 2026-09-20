@@ -364,8 +364,12 @@ function scrapePageData() {
     '.trc_rbox_container'
   ];
   const detectedAds = document.querySelectorAll(adSelectors.join(','));
-  const adCount = detectedAds.length;
+  // Calculate commercial clutter penalty using calibrated lambda = 4.7
+  const lambda = 4.7;
+  const adCount = data.adCount || 0;
+  const adPenalty = Math.round(lambda * Math.log(1 + adCount));
 
+  score -= adPenalty;
   const hasAutoplayVideo = !!document.querySelector('video[autoplay], video[data-autoplay]');
   const quotesCount = (bodyText.match(/"([^"]{10,})"/g) || []).length;
   
