@@ -75,7 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = results[0].result;
       data.isHttps = tab.url ? tab.url.toLowerCase().startsWith('https://') : false;
 
-      // Run domain age check and news corroboration simultaneously
       const [domainAgeDays, crossRefData] = await Promise.all([
         getDomainAgeInDays(data.hostname),
         crossReferenceNews(data.headline, data.hostname)
@@ -142,7 +141,6 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
       }
 
-      // Populate and display the Related Coverage link cards
       if (crossRefData && crossRefData.articles && crossRefData.articles.length > 0) {
         corroborationContainer.style.display = "block";
         articleLinksList.innerHTML = "";
@@ -325,7 +323,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function scrapePageData() {
-  const headline = document.querySelector('h1')?.innerText?.trim() || document.title || "";
+  const ogTitle = document.querySelector('meta[property="og:title"]')?.content;
+  const headline = (
+    document.querySelector('h1')?.innerText ||
+    ogTitle ||
+    document.title ||
+    ""
+  ).trim();
+
   const paragraphs = Array.from(document.querySelectorAll('article p, main p, p'))
     .map(p => p.innerText.trim())
     .filter(text => text.length > 25 && !text.includes("cookie") && !text.includes("©"));
@@ -364,16 +369,11 @@ function scrapePageData() {
     '.trc_rbox_container'
   ];
   const detectedAds = document.querySelectorAll(adSelectors.join(','));
-  // Calculate commercial clutter penalty using calibrated lambda = 4.7
-  const lambda = 4.7;
-  const adCount = data.adCount || 0;
-  const adPenalty = Math.round(lambda * Math.log(1 + adCount));
+  const adCount = detectedAds.length;
 
-  score -= adPenalty;
   const hasAutoplayVideo = !!document.querySelector('video[autoplay], video[data-autoplay]');
   const quotesCount = (bodyText.match(/"([^"]{10,})"/g) || []).length;
   
-  // 1. Selector check (standard classes, schema tags, AP/CNN/NYT custom components)
   const bylineSelectors = [
     '[rel="author"]',
     'meta[name="author"]',
@@ -390,20 +390,17 @@ function scrapePageData() {
 
   let hasByline = !!document.querySelector(bylineSelectors.join(','));
 
-  // 2. Text-pattern fallback (catches "By  JOCELYN NOVECK", "By John Doe", etc.)
   if (!hasByline) {
     const sampleText = Array.from(document.querySelectorAll('header, [class*="header"], h1, h2, p, span'))
       .slice(0, 15)
       .map(el => el.innerText)
       .join(' ')
-      .replace(/\u00a0/g, ' '); // Normalize non-breaking spaces
+      .replace(/\u00a0/g, ' ');
 
-    // Matches "By [Name]" in Title Case OR ALL-CAPS (e.g., By JOCELYN NOVECK)
     const bylinePattern = /\b(?:by|reporting by|written by)\s+([A-Z][a-zA-Z\.'-]+(?:\s+[A-Z][a-zA-Z\.'-]+){1,3})\b/;
     hasByline = bylinePattern.test(sampleText);
   }
 
-  // 3. Structured Data / JSON-LD fallback (AP News, NYT, and Reuters embed this on every story)
   if (!hasByline) {
     const scripts = document.querySelectorAll('script[type="application/ld+json"]');
     for (const script of scripts) {
@@ -566,18 +563,24 @@ function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Insecure protocol connection (HTTP)" });
   }
 
-  // Ad Density & Farm Signals
-  if (data.adCount >= 6 || (data.paragraphCount > 0 && data.adCount / data.paragraphCount > 1.2)) {
-    score -= 20;
+  // Calibrated Logarithmic Ad Penalty (lambda = 4.7)
+  const lambda = 4.7;
+  const adCount = data.adCount || 0;
+  const adPenalty = Math.round(lambda * Math.log(1 + adCount));
+  score -= adPenalty;
+
+  if (adPenalty >= 15) {
     domainSignals.push({ 
       icon: "⚠️", 
-      text: `Aggressive ad density detected (${data.adCount} ad units/widgets)` 
+      text: `Heavy commercial clutter (${adCount} ad units, -${adPenalty} pts)` 
     });
-  } else if (data.adCount >= 3) {
-    score -= 5;
-    domainSignals.push({ icon: "ℹ️", text: `Moderate advertising density (${data.adCount} units)` });
+  } else if (adPenalty >= 8) {
+    domainSignals.push({ 
+      icon: "ℹ️", 
+      text: `Moderate advertising density (${adCount} units, -${adPenalty} pts)` 
+    });
   } else {
-    domainSignals.push({ icon: "✅", text: "Clean reading layout (low ad intrusion)" });
+    domainSignals.push({ icon: "✅", text: "Clean reading layout (minimal ad intrusion)" });
   }
 
   if (data.hasAutoplayVideo) {
