@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const scoreBar = document.getElementById('scoreBar');
   const domainList = document.getElementById('domainSignals');
   const contentList = document.getElementById('contentSignals');
+  const corroborationContainer = document.getElementById('corroborationContainer');
+  const articleLinksList = document.getElementById('articleLinksList');
   const highlightBtn = document.getElementById('highlightBtn');
   const reanalyzeBtn = document.getElementById('reanalyzeBtn');
 
@@ -27,6 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (riskBadge) {
       riskBadge.innerText = "CROSS-REFERENCING";
       riskBadge.className = "status-badge badge-warn";
+    }
+    if (corroborationContainer) {
+      corroborationContainer.style.display = "none";
+      articleLinksList.innerHTML = "";
     }
 
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -69,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = results[0].result;
       data.isHttps = tab.url ? tab.url.toLowerCase().startsWith('https://') : false;
 
-      // Run domain age lookup and news cross-referencing in parallel
+      // Run domain check and news search simultaneously
       const [domainAgeDays, crossRefData] = await Promise.all([
         getDomainAgeInDays(data.hostname),
         crossReferenceNews(data.headline, data.hostname)
@@ -136,6 +142,32 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
       }
 
+      // ACTIVATION: Populate and display the Related Coverage link cards
+      if (crossRefData && crossRefData.articles && crossRefData.articles.length > 0) {
+        corroborationContainer.style.display = "block";
+        articleLinksList.innerHTML = "";
+
+        crossRefData.articles.forEach(art => {
+          const card = document.createElement('div');
+          card.className = "article-card";
+          card.innerHTML = `
+            <div class="article-card-title">${art.title}</div>
+            <div class="article-card-meta">
+              <span>${art.source}</span>
+              <span>Read Story ↗</span>
+            </div>
+          `;
+
+          card.addEventListener('click', () => {
+            if (art.url) {
+              chrome.tabs.create({ url: art.url });
+            }
+          });
+
+          articleLinksList.appendChild(card);
+        });
+      }
+
     } catch (err) {
       console.error(err);
       if (scoreBar) scoreBar.classList.remove('is-loading');
@@ -143,14 +175,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Cross-reference headline against Google News RSS
   async function crossReferenceNews(headline, currentHostname) {
     if (!headline || headline.trim().length < 10) {
-      return { status: "no_headline", count: 0, sources: [] };
+      return { status: "no_headline", count: 0, sources: [], articles: [] };
     }
 
     try {
-      // 1. Filter headline down to essential keywords
       const stopWords = new Set([
         "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "with",
         "of", "by", "from", "up", "about", "into", "over", "after", "is", "are", "was",
@@ -164,13 +194,12 @@ document.addEventListener('DOMContentLoaded', () => {
         .split(/\s+/)
         .filter(word => word.length > 2 && !stopWords.has(word));
 
-      // Take the 4 most relevant keywords
       const queryWords = cleanTokens.slice(0, 4).join(' ');
-      if (!queryWords) return { status: "no_query", count: 0, sources: [] };
+      if (!queryWords) return { status: "no_query", count: 0, sources: [], articles: [] };
 
       const url = `https://news.google.com/rss/search?q=${encodeURIComponent(queryWords)}&hl=en-US&gl=US&ceid=US:en`;
       const response = await fetch(url);
-      if (!response.ok) return { status: "fetch_failed", count: 0, sources: [] };
+      if (!response.ok) return { status: "fetch_failed", count: 0, sources: [], articles: [] };
 
       const xmlText = await response.text();
       const parser = new DOMParser();
@@ -178,23 +207,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const items = Array.from(xmlDoc.querySelectorAll("item"));
       const uniqueSources = new Set();
+      const articles = [];
 
-      items.forEach(item => {
+      for (const item of items) {
         const sourceNode = item.querySelector("source");
-        const sourceName = sourceNode ? sourceNode.textContent.trim() : null;
+        const sourceName = sourceNode ? sourceNode.textContent.trim() : "News Outlet";
+        const titleNode = item.querySelector("title");
+        const linkNode = item.querySelector("link");
+
+        let rawTitle = titleNode ? titleNode.textContent.trim() : "Related Story";
+        if (rawTitle.includes(" - ")) {
+          rawTitle = rawTitle.split(" - ").slice(0, -1).join(" - ");
+        }
+
+        const linkUrl = linkNode ? linkNode.textContent.trim() : null;
+
         if (sourceName && !currentHostname.toLowerCase().includes(sourceName.toLowerCase())) {
           uniqueSources.add(sourceName);
+
+          if (articles.length < 3 && linkUrl) {
+            articles.push({
+              title: rawTitle,
+              source: sourceName,
+              url: linkUrl
+            });
+          }
         }
-      });
+      }
 
       return {
         status: "success",
         count: uniqueSources.size,
-        sources: Array.from(uniqueSources).slice(0, 3) // Top 3 other outlets
+        sources: Array.from(uniqueSources).slice(0, 3),
+        articles: articles
       };
     } catch (e) {
       console.warn("Cross-reference failed:", e);
-      return { status: "error", count: 0, sources: [] };
+      return { status: "error", count: 0, sources: [], articles: [] };
     }
   }
 
@@ -491,7 +540,7 @@ function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Intrusive autoplay video player present" });
   }
 
-  // 2. Cross-Referencing Signals (Consensus Verification)
+  // 2. Cross-Referencing Signals
   if (data.crossRef && data.crossRef.status === "success") {
     if (data.crossRef.count >= 3) {
       score += 15;
