@@ -1,17 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "Klarity: Content Analysis Engine",
+  "name": "NewsShield - Credibility Analyzer",
   "version": "1.0",
-  "description": "Analyze web content for signals of disinformation using the Nutrition Label UI.",
+  "description": "Analyzes online news articles for credibility signals and sensationalism.",
   "permissions": [
     "activeTab",
-    "scripting",
-    "tabs"
+    "scripting"
   ],
   "host_permissions": [
-   "https://rdap.org/*"
-],
+    "https://news.google.com/*",
+    "https://rdap.org/*"
+  ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_title": "Analyze Article"
   }
 }
