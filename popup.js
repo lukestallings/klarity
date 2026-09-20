@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (scoreVal) scoreVal.innerText = "--/100";
     if (riskBadge) {
-      riskBadge.innerText = "SCANNING";
+      riskBadge.innerText = "CROSS-REFERENCING";
       riskBadge.className = "status-badge badge-warn";
     }
 
@@ -69,8 +69,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = results[0].result;
       data.isHttps = tab.url ? tab.url.toLowerCase().startsWith('https://') : false;
 
-      const domainAgeDays = await getDomainAgeInDays(data.hostname);
+      // Run domain age lookup and news cross-referencing in parallel
+      const [domainAgeDays, crossRefData] = await Promise.all([
+        getDomainAgeInDays(data.hostname),
+        crossReferenceNews(data.headline, data.hostname)
+      ]);
+
       data.domainAgeDays = domainAgeDays;
+      data.crossRef = crossRefData;
 
       const evaluation = evaluateContent(data, SENSATIONAL_WORDS);
       flaggedWords = evaluation.matchedWords;
@@ -134,6 +140,61 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error(err);
       if (scoreBar) scoreBar.classList.remove('is-loading');
       if (headlineEl) headlineEl.innerText = "Scan Failed";
+    }
+  }
+
+  // Cross-reference headline against Google News RSS
+  async function crossReferenceNews(headline, currentHostname) {
+    if (!headline || headline.trim().length < 10) {
+      return { status: "no_headline", count: 0, sources: [] };
+    }
+
+    try {
+      // 1. Filter headline down to essential keywords
+      const stopWords = new Set([
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "with",
+        "of", "by", "from", "up", "about", "into", "over", "after", "is", "are", "was",
+        "were", "be", "been", "being", "have", "has", "had", "it", "its", "that", "this",
+        "says", "said", "new", "report", "breaking", "update"
+      ]);
+
+      const cleanTokens = headline
+        .replace(/[^\w\s]/gi, '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(word => word.length > 2 && !stopWords.has(word));
+
+      // Take the 4 most relevant keywords
+      const queryWords = cleanTokens.slice(0, 4).join(' ');
+      if (!queryWords) return { status: "no_query", count: 0, sources: [] };
+
+      const url = `https://news.google.com/rss/search?q=${encodeURIComponent(queryWords)}&hl=en-US&gl=US&ceid=US:en`;
+      const response = await fetch(url);
+      if (!response.ok) return { status: "fetch_failed", count: 0, sources: [] };
+
+      const xmlText = await response.text();
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+      const items = Array.from(xmlDoc.querySelectorAll("item"));
+      const uniqueSources = new Set();
+
+      items.forEach(item => {
+        const sourceNode = item.querySelector("source");
+        const sourceName = sourceNode ? sourceNode.textContent.trim() : null;
+        if (sourceName && !currentHostname.toLowerCase().includes(sourceName.toLowerCase())) {
+          uniqueSources.add(sourceName);
+        }
+      });
+
+      return {
+        status: "success",
+        count: uniqueSources.size,
+        sources: Array.from(uniqueSources).slice(0, 3) // Top 3 other outlets
+      };
+    } catch (e) {
+      console.warn("Cross-reference failed:", e);
+      return { status: "error", count: 0, sources: [] };
     }
   }
 
@@ -323,10 +384,6 @@ function checkTyposquatting(currentDomain, trustedList) {
   return null;
 }
 
-// Priority sorting helper:
-// 1 = High-risk warnings (🚨, ⚠️)
-// 2 = Positives (✅, 🏛️, 🔒)
-// 3 = Neutral informational notices (ℹ️)
 function prioritizeSignals(signals) {
   const order = { '🚨': 1, '⚠️': 1, '✅': 2, '🏛️': 2, '🔒': 2, 'ℹ️': 3 };
   return [...signals].sort((a, b) => (order[a.icon] || 2) - (order[b.icon] || 2));
@@ -434,7 +491,31 @@ function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Intrusive autoplay video player present" });
   }
 
-  // 2. Sensational Words
+  // 2. Cross-Referencing Signals (Consensus Verification)
+  if (data.crossRef && data.crossRef.status === "success") {
+    if (data.crossRef.count >= 3) {
+      score += 15;
+      const sample = data.crossRef.sources.join(", ");
+      contentSignals.push({ 
+        icon: "✅", 
+        text: `Corroborated by multiple outlets (${data.crossRef.count}+ reporting: ${sample})` 
+      });
+    } else if (data.crossRef.count === 1 || data.crossRef.count === 2) {
+      score += 5;
+      contentSignals.push({ 
+        icon: "ℹ️", 
+        text: `Limited secondary coverage (${data.crossRef.sources.join(", ")})` 
+      });
+    } else {
+      score -= 20;
+      contentSignals.push({ 
+        icon: "⚠️", 
+        text: "Isolated report: zero corroboration found from other news outlets" 
+      });
+    }
+  }
+
+  // 3. Sensational Words
   const fullText = (data.headline + " " + data.bodyText);
   const matchedWords = [];
   sensationalWords.forEach(word => {
@@ -454,7 +535,7 @@ function evaluateContent(data, sensationalWords) {
     contentSignals.push({ icon: "✅", text: "No sensationalist buzzwords found" });
   }
 
-  // 3. Headline Caps
+  // 4. Headline Caps
   const lettersOnly = data.headline.replace(/[^a-zA-Z]/g, '');
   if (lettersOnly.length > 0) {
     const caps = (data.headline.replace(/[^A-Z]/g, '').length / lettersOnly.length) * 100;
@@ -464,7 +545,7 @@ function evaluateContent(data, sensationalWords) {
     }
   }
 
-  // 4. Bylines & Quotes
+  // 5. Bylines & Quotes
   if (data.hasByline) {
     score += 10;
     contentSignals.push({ icon: "✅", text: "Verified author/reporter byline present" });
@@ -486,7 +567,6 @@ function evaluateContent(data, sensationalWords) {
 
   const finalScore = Math.max(5, Math.min(99, score));
   
-  // Sort signals so warnings are at the top and neutral info (ℹ️) is pushed to the bottom
   return { 
     finalScore, 
     domainSignals: prioritizeSignals(domainSignals), 
