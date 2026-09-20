@@ -5,7 +5,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   return true;
 });
+function extractPublishDate() {
+  // Check common schema/meta tags
+  const selectors = [
+    'meta[property="article:published_time"]',
+    'meta[name="pubdate"]',
+    'meta[name="date"]',
+    'time[datetime]',
+    'meta[property="og:published_time"]'
+  ];
 
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    const dateStr = el?.getAttribute('content') || el?.getAttribute('datetime');
+    if (dateStr && !isNaN(Date.parse(dateStr))) {
+      return new Date(dateStr);
+    }
+  }
+
+  return new Date(); // Fallback to now if no explicit metadata exists
+}
 function highlightTerms(words) {
   if (!words || words.length === 0) return 0;
 
