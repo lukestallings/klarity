@@ -88,8 +88,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (headlineEl) {
         if (data.headline && data.headline.length > 0) {
-          headlineEl.innerText = data.headline.length > 32 
-            ? data.headline.substring(0, 32) + "..." 
+          headlineEl.innerText = data.headline.length > 52 
+            ? data.headline.substring(0, 52) + "..." 
             : data.headline;
         } else {
           headlineEl.innerText = "Page Analyzed";
@@ -572,12 +572,12 @@ function evaluateContent(data, sensationalWords) {
   if (adPenalty >= 15) {
     domainSignals.push({ 
       icon: "⚠️", 
-      text: `Heavy commercial clutter (${adCount} ad units, -${adPenalty} pts)` 
+      text: `Heavy commercial clutter (${adCount} ad units detected)` 
     });
   } else if (adPenalty >= 8) {
     domainSignals.push({ 
       icon: "ℹ️", 
-      text: `Moderate advertising density (${adCount} units, -${adPenalty} pts)` 
+      text: `Moderate advertising density (${adCount} ad units detected)` 
     });
   } else {
     domainSignals.push({ icon: "✅", text: "Clean reading layout (minimal ad intrusion)" });
