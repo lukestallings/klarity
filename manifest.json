@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "NewsShield - Credibility Analyzer",
+  "name": "Klarity Analysis",
   "version": "1.0",
   "description": "Analyzes online news articles for credibility signals and sensationalism.",
   "permissions": [
@@ -13,6 +13,18 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Analyze Article"
+    "default_title": "Klarity Analysis",
+    "default_icon": {
+      "16": "icon128.png",
+      "32": "icon128.png",
+      "48": "icon128.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon128.png",
+    "32": "icon128.png",
+    "48": "icon128.png",
+    "128": "icon128.png"
   }
 }
