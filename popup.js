@@ -84,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
       data.domainAgeDays = domainAgeDays;
       data.crossRef = crossRefData;
 
-      const evaluation = evaluateContent(data, SENSATIONAL_WORDS);
+      const evaluation = await evaluateContent(data, SENSATIONAL_WORDS);
       flaggedWords = evaluation.matchedWords;
 
       if (headlineEl) {
@@ -142,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
       }
 
-      // ACTIVATION: Populate and display the Related Coverage link cards
+      // Populate and display the Related Coverage link cards
       if (crossRefData && crossRefData.articles && crossRefData.articles.length > 0) {
         corroborationContainer.style.display = "block";
         articleLinksList.innerHTML = "";
@@ -367,18 +367,23 @@ function scrapePageData() {
   const adCount = detectedAds.length;
 
   const hasAutoplayVideo = !!document.querySelector('video[autoplay], video[data-autoplay]');
-
   const quotesCount = (bodyText.match(/"([^"]{10,})"/g) || []).length;
+  
   const hasByline = !!(
     document.querySelector('[rel="author"]') ||
     document.querySelector('meta[name="author"]') ||
     document.querySelector('.byline, .author, [itemprop="author"]')
   );
 
+  // Scrape publication timestamp
+  const dateMeta = document.querySelector('meta[property="article:published_time"], meta[name="pubdate"], meta[name="date"], time[datetime]');
+  const publishDate = dateMeta?.getAttribute('content') || dateMeta?.getAttribute('datetime') || new Date().toISOString();
+
   return {
     hostname: currentHost,
     headline: headline,
     bodyText: bodyText,
+    publishDate: publishDate,
     paragraphCount: paragraphs.length,
     externalLinksCount: externalLinks.length,
     quotesCount: quotesCount,
@@ -387,6 +392,51 @@ function scrapePageData() {
     adCount: adCount,
     hasAutoplayVideo: hasAutoplayVideo
   };
+}
+
+async function checkRecycledNews(headline, articleDate) {
+  const query = encodeURIComponent(headline.slice(0, 80));
+  const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
+
+  try {
+    const response = await fetch(rssUrl);
+    if (!response.ok) return { flagged: false };
+    
+    const xmlText = await response.text();
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+    
+    const items = Array.from(xmlDoc.querySelectorAll('item'));
+    if (items.length < 3) {
+      return { flagged: false, status: "INSUFFICIENT_DATA" };
+    }
+
+    const dates = items.map(item => {
+      const pubDateText = item.querySelector('pubDate')?.textContent;
+      return pubDateText ? new Date(pubDateText).getTime() : null;
+    }).filter(Boolean);
+
+    if (dates.length < 3) return { flagged: false };
+
+    dates.sort((a, b) => a - b);
+    const medianDate = dates[Math.floor(dates.length / 2)];
+    
+    const articleTime = new Date(articleDate).getTime();
+    const diffDays = Math.abs(articleTime - medianDate) / (1000 * 60 * 60 * 24);
+
+    if (diffDays > 180) {
+      return {
+        flagged: true,
+        clusterDate: new Date(medianDate).toISOString().split('T')[0],
+        message: `Outdated event: Coverage clustered around ${new Date(medianDate).getFullYear()}, but presented as recent.`
+      };
+    }
+
+    return { flagged: false };
+  } catch (err) {
+    console.warn("Date corroboration error:", err);
+    return { flagged: false, status: "ERROR" };
+  }
 }
 
 function levenshteinDistance(a, b) {
@@ -438,7 +488,7 @@ function prioritizeSignals(signals) {
   return [...signals].sort((a, b) => (order[a.icon] || 2) - (order[b.icon] || 2));
 }
 
-function evaluateContent(data, sensationalWords) {
+async function evaluateContent(data, sensationalWords) {
   let score = 70;
   const domainSignals = [];
   const contentSignals = [];
@@ -540,7 +590,7 @@ function evaluateContent(data, sensationalWords) {
     domainSignals.push({ icon: "⚠️", text: "Intrusive autoplay video player present" });
   }
 
-  // 2. Cross-Referencing Signals
+  // 2. Cross-Referencing & Outdated News Signals
   if (data.crossRef && data.crossRef.status === "success") {
     if (data.crossRef.count >= 3) {
       score += 15;
@@ -560,6 +610,18 @@ function evaluateContent(data, sensationalWords) {
       contentSignals.push({ 
         icon: "⚠️", 
         text: "Isolated report: zero corroboration found from other news outlets" 
+      });
+    }
+  }
+
+  // Recycled Story / Temporal Outlier Check
+  if (data.headline && data.publishDate) {
+    const recycledCheck = await checkRecycledNews(data.headline, data.publishDate);
+    if (recycledCheck && recycledCheck.flagged) {
+      score -= 25;
+      contentSignals.push({
+        icon: "🚨",
+        text: `Recycled story detected: Original coverage peaked around ${recycledCheck.clusterDate}`
       });
     }
   }
@@ -613,50 +675,6 @@ function evaluateContent(data, sensationalWords) {
     score -= 10;
     contentSignals.push({ icon: "⚠️", text: "No direct quotes or primary witnesses" });
   }
-  async function checkRecycledNews(headline, articleDate) {
-  // Sanitize headline into core search terms
-  const query = encodeURIComponent(headline.slice(0, 80));
-  const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
-
-  try {
-    const response = await fetch(rssUrl);
-    const xmlText = await response.text();
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-    
-    const items = Array.from(xmlDoc.querySelectorAll('item'));
-    if (items.length < 3) {
-      return { status: "INSUFFICIENT_DATA" };
-    }
-
-    // Parse publication dates of all matching news reports
-    const dates = items.map(item => {
-      const pubDateText = item.querySelector('pubDate')?.textContent;
-      return pubDateText ? new Date(pubDateText).getTime() : null;
-    }).filter(Boolean);
-
-    // Calculate the median publication time across coverage
-    dates.sort((a, b) => a - b);
-    const medianDate = dates[Math.floor(dates.length / 2)];
-    
-    const articleTime = new Date(articleDate).getTime();
-    const diffDays = Math.abs(articleTime - medianDate) / (1000 * 60 * 60 * 24);
-
-    // If the median cluster is older than 180 days while this post frames it as current:
-    if (diffDays > 180) {
-      return {
-        flagged: true,
-        clusterDate: new Date(medianDate).toISOString().split('T')[0],
-        message: `Outdated event: Coverage clustered around ${new Date(medianDate).getFullYear()}, but presented as recent.`
-      };
-    }
-
-    return { flagged: false };
-  } catch (err) {
-    console.error("Date corroboration error:", err);
-    return { status: "ERROR" };
-  }
-}
 
   const finalScore = Math.max(5, Math.min(99, score));
   
