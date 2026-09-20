@@ -6,18 +6,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return;
     }
 
-    // Clean up previous highlights first so we don't duplicate tags
+    // 1. Inject fade-out style rule if it doesn't already exist on the page
+    if (!document.getElementById('newsshield-highlight-style')) {
+      const style = document.createElement('style');
+      style.id = 'newsshield-highlight-style';
+      style.textContent = `
+        @keyframes newsshieldFade {
+          0% {
+            background-color: #fef08a;
+            color: #854d0e;
+            border-bottom-color: #ca8a04;
+          }
+          70% {
+            background-color: #fef08a;
+            color: #854d0e;
+            border-bottom-color: #ca8a04;
+          }
+          100% {
+            background-color: transparent;
+            color: inherit;
+            border-bottom-color: transparent;
+          }
+        }
+        .newsshield-highlight {
+          display: inline;
+          background-color: #fef08a;
+          color: #854d0e;
+          padding: 2px 4px;
+          border-radius: 4px;
+          font-weight: 600;
+          border-bottom: 2px solid #ca8a04;
+          animation: newsshieldFade 5s ease-in-out forwards;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // 2. Clean up any previous highlights before applying new ones
     document.querySelectorAll('.newsshield-highlight').forEach(el => {
       const parent = el.parentNode;
-      parent.replaceChild(document.createTextNode(el.textContent), el);
-      parent.normalize();
+      if (parent) {
+        parent.replaceChild(document.createTextNode(el.textContent), el);
+        parent.normalize();
+      }
     });
 
-    // Build regex to match whole words case-insensitively
+    // 3. Build regex to target whole words case-insensitively
     const escapedWords = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     const pattern = new RegExp(`\\b(${escapedWords.join('|')})\\b`, 'gi');
 
-    // Target visible paragraph and heading text inside the article body
+    // Collect visible text nodes from articles, main containers, and headings
     const textNodes = [];
     const elements = document.querySelectorAll('article p, main p, h1, h2, h3, p');
 
@@ -37,7 +75,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (pattern.test(node.nodeValue)) {
         const span = document.createElement('span');
         span.innerHTML = node.nodeValue.replace(pattern, (match) => {
-          return `<mark class="newsshield-highlight" style="background-color: #fef08a; color: #854d0e; padding: 2px 4px; border-radius: 4px; font-weight: 600; border-bottom: 2px solid #ca8a04;">${match}</mark>`;
+          return `<mark class="newsshield-highlight">${match}</mark>`;
         });
 
         const parent = node.parentNode;
@@ -50,7 +88,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
 
-    // Smoothly scroll the page directly to the first flagged occurrence
+    // 4. Smooth scroll to the first flagged word
     if (firstMatchElement) {
       firstMatchElement.scrollIntoView({
         behavior: 'smooth',
@@ -60,6 +98,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else {
       sendResponse({ status: "not_found" });
     }
+
+    // 5. Fully unwrap the tags from the DOM once the 5s animation completes
+    setTimeout(() => {
+      document.querySelectorAll('.newsshield-highlight').forEach(el => {
+        const parent = el.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(el.textContent), el);
+          parent.normalize();
+        }
+      });
+    }, 5000);
   }
   return true;
 });
