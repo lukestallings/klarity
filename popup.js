@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     activeTabId = tab.id;
 
-    if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://'))) {
+    if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
       if (headlineEl) headlineEl.innerText = "System Page";
       if (riskBadge) {
         riskBadge.innerText = "N/A";
@@ -67,6 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const data = results[0].result;
+      data.isHttps = tab.url ? tab.url.toLowerCase().startsWith('https://') : false;
+
       const domainAgeDays = await getDomainAgeInDays(data.hostname);
       data.domainAgeDays = domainAgeDays;
 
@@ -240,7 +242,6 @@ function scrapePageData() {
     return aboutKeywords.some(kw => text === kw || href.includes(kw.replace(/\s+/g, '-')) || href.includes(kw.replace(/\s+/g, '')));
   });
 
-  // --- Ad Density & Autoplay Detection ---
   const adSelectors = [
     'iframe[src*="doubleclick"]',
     'iframe[src*="googlesyndication"]',
@@ -269,7 +270,6 @@ function scrapePageData() {
     headline: headline,
     bodyText: bodyText,
     paragraphCount: paragraphs.length,
-    isHttps: window.location.protocol === 'https:',
     externalLinksCount: externalLinks.length,
     quotesCount: quotesCount,
     hasByline: hasByline,
@@ -321,6 +321,15 @@ function checkTyposquatting(currentDomain, trustedList) {
   }
 
   return null;
+}
+
+// Priority sorting helper:
+// 1 = High-risk warnings (🚨, ⚠️)
+// 2 = Positives (✅, 🏛️, 🔒)
+// 3 = Neutral informational notices (ℹ️)
+function prioritizeSignals(signals) {
+  const order = { '🚨': 1, '⚠️': 1, '✅': 2, '🏛️': 2, '🔒': 2, 'ℹ️': 3 };
+  return [...signals].sort((a, b) => (order[a.icon] || 2) - (order[b.icon] || 2));
 }
 
 function evaluateContent(data, sensationalWords) {
@@ -476,5 +485,12 @@ function evaluateContent(data, sensationalWords) {
   }
 
   const finalScore = Math.max(5, Math.min(99, score));
-  return { finalScore, domainSignals, contentSignals, matchedWords };
+  
+  // Sort signals so warnings are at the top and neutral info (ℹ️) is pushed to the bottom
+  return { 
+    finalScore, 
+    domainSignals: prioritizeSignals(domainSignals), 
+    contentSignals: prioritizeSignals(contentSignals), 
+    matchedWords 
+  };
 }
